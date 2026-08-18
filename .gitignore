@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+.venv/
+venv/
+env/
+
+# Verification plots (generated images, not uploaded)
+annotation_segments/verification/plots/
+annotation_segments/verification/summaries/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Junk files
+annotation_segments/新建 文本文档.txt
