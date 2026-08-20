@@ -1,4 +1,3 @@
-import math
 import os
 import re
 import sys
@@ -9,25 +8,26 @@ import numpy as np
 import pandas as pd
 import cv2
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QFont
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QComboBox,
     QTableWidget, QTableWidgetItem, QHBoxLayout, QVBoxLayout, QSplitter,
-    QFileDialog, QLineEdit, QSpinBox, QDoubleSpinBox, QMessageBox,
+    QFileDialog, QLineEdit, QMessageBox,
     QAbstractItemView, QHeaderView,
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CSV_PATH = os.path.join(BASE_DIR, "annotation_events.csv")
+VIDEO_BASE_DIR = os.path.join(BASE_DIR, "eye-movement")
+EVENTS_DIR = os.path.join(BASE_DIR, "events")
+CSV_PATH = os.path.join(EVENTS_DIR, "annotation_events.csv")
 RESULTS_PATH = os.path.join(BASE_DIR, "verification", "verification_results.csv")
 OFFSET_CACHE = os.path.join(BASE_DIR, "verification", "offset_cache.json")
 MANUAL_KEYFRAMES_PATH = os.path.join(BASE_DIR, "verification", "manual_keyframes.csv")
 
 MANUAL_KF_COLUMNS = [
     "participant", "event_type", "event_ts", "event_ts_float",
-    "window_start", "window_end", "duration_sec", "distance_px",
-    "start_x", "start_y", "end_x", "end_y", "delete_key", "event_id", "notes",
+    "window_start", "window_end", "duration_sec", "delete_key", "event_id", "notes",
 ]
 
 ACTION_TYPE_MAP = {"标注动作": "annotation", "删除动作": "deletion"}
@@ -35,22 +35,15 @@ ACTION_LABEL_MAP = {"annotation": "标注动作", "deletion": "删除动作"}
 
 ANNOTATION_COLOR = QColor(30, 144, 255)
 DELETION_COLOR = QColor(255, 40, 40)
-FOCUS_COLOR = QColor(255, 200, 0)
 KEYFRAME_COLOR = QColor(0, 200, 100)
-PENDING_COLOR = QColor(0, 255, 255)
-
-DEFAULT_SCREEN_W = 1920
-DEFAULT_SCREEN_H = 1080
 
 SCREEN_REC_DIR_NAMES = ("眼动",)
 TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})[ _](\d{2})-(\d{2})-(\d{2})")
 
 
 def detect_video_base():
-    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-    cand = os.path.join(desktop, "AI读片原数据")
-    if os.path.isdir(cand):
-        return cand
+    if os.path.isdir(VIDEO_BASE_DIR):
+        return VIDEO_BASE_DIR
     return ""
 
 
@@ -107,15 +100,6 @@ def format_ts(ts_float):
         return datetime.fromtimestamp(ts_float).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     except (OverflowError, OSError, ValueError):
         return ""
-
-
-class ClickableLabel(QLabel):
-    clicked = Signal(float, float)
-
-    def mousePressEvent(self, event):
-        pos = event.position()
-        self.clicked.emit(pos.x(), pos.y())
-        super().mousePressEvent(event)
 
 
 class TimelineWidget(QWidget):
@@ -201,9 +185,6 @@ class AnnotationPlayer(QMainWindow):
         self.results = {}
         self.play_speed = 1.0
         self._frame_accum = 0.0
-        self.last_frame_size = (0, 0)
-        self._kf_start = None
-        self._kf_end = None
 
         self.load_offsets()
         self.load_results()
@@ -253,43 +234,21 @@ class AnnotationPlayer(QMainWindow):
         control.addWidget(QLabel("倍速:"))
         control.addWidget(self.cmb_speed)
 
-        control.addWidget(QLabel("显示半径(s):"))
-        self.spin_radius = QDoubleSpinBox()
-        self.spin_radius.setRange(0.0, 30.0)
-        self.spin_radius.setValue(5.0)
-        self.spin_radius.setSingleStep(0.5)
-        self.spin_radius.valueChanged.connect(self.refresh_frame)
-        control.addWidget(self.spin_radius)
-
-        control.addWidget(QLabel("录屏分辨率:"))
-        self.spin_scr_w = QSpinBox()
-        self.spin_scr_w.setRange(0, 99999)
-        self.spin_scr_w.setValue(DEFAULT_SCREEN_W)
-        self.spin_scr_w.valueChanged.connect(self.refresh_frame)
-        self.spin_scr_h = QSpinBox()
-        self.spin_scr_h.setRange(0, 99999)
-        self.spin_scr_h.setValue(DEFAULT_SCREEN_H)
-        self.spin_scr_h.valueChanged.connect(self.refresh_frame)
-        control.addWidget(self.spin_scr_w)
-        control.addWidget(QLabel("x"))
-        control.addWidget(self.spin_scr_h)
-
         root.addLayout(control)
 
         splitter = QSplitter(Qt.Horizontal)
 
-        self.video_label = ClickableLabel("尚未加载视频。\n点击“加载视频”选择视频文件。")
+        self.video_label = QLabel("尚未加载视频。\n点击“加载视频”选择视频文件。")
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setMinimumSize(800, 600)
         self.video_label.setStyleSheet("background-color:#101012; color:#999;")
         self.video_label.setScaledContents(False)
-        self.video_label.clicked.connect(self.on_video_clicked)
         splitter.addWidget(self.video_label)
 
         self.table = QTableWidget()
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels(
-            ["event_id", "类型", "时间", "时长s", "距离px", "判断", "备注"])
+            ["event_id", "事件性质", "类型", "时间", "时长s", "判断", "备注"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -333,7 +292,6 @@ class AnnotationPlayer(QMainWindow):
         row2 = QHBoxLayout()
         self.cmb_action = QComboBox()
         self.cmb_action.addItems(list(ACTION_TYPE_MAP.keys()))
-        self.cmb_action.currentIndexChanged.connect(self._on_action_changed)
         self.edit_keynote = QLineEdit()
         self.edit_keynote.setPlaceholderText("关键帧备注")
         self.edit_keynote.returnPressed.connect(self.add_keyframe)
@@ -429,11 +387,6 @@ class AnnotationPlayer(QMainWindow):
                 "window_start": str(row["window_start"]),
                 "window_end": str(row["window_end"]),
                 "duration_sec": to_float(row["duration_sec"]),
-                "distance_px": to_float(row["distance_px"]),
-                "start_x": to_float(row["start_x"]),
-                "start_y": to_float(row["start_y"]),
-                "end_x": to_float(row["end_x"]),
-                "end_y": to_float(row["end_y"]),
                 "delete_key": str(row["delete_key"]) if "delete_key" in mdf.columns else "",
                 "event_id": int(to_float(row["event_id"])),
                 "notes": str(row["notes"]) if "notes" in mdf.columns and not pd.isna(row["notes"]) else "",
@@ -453,13 +406,15 @@ class AnnotationPlayer(QMainWindow):
             return
         rows = []
         for _, row in self.df.iterrows():
+            if str(row["participant"]) != self.participant:
+                continue
             eid = int(to_float(row["event_id"]))
             r = self.results.get(eid, {"verified": "", "notes": ""})
             verified = str(r.get("verified", ""))
             if verified == "ok":
-                status = "ai标记人标记"
+                status = "正确"
             elif verified == "bad":
-                status = "ai标记人删除"
+                status = "错误"
             else:
                 status = "未判断"
             rows.append({
@@ -470,37 +425,29 @@ class AnnotationPlayer(QMainWindow):
                 "动作": ACTION_LABEL_MAP.get(str(row["event_type"]), str(row["event_type"])),
                 "event_ts": str(row["event_ts"]),
                 "event_ts_float": to_float(row["event_ts_float"]),
-                "start_x": to_float(row["start_x"]),
-                "start_y": to_float(row["start_y"]),
-                "end_x": to_float(row["end_x"]),
-                "end_y": to_float(row["end_y"]),
-                "distance_px": to_float(row["distance_px"]),
                 "duration_sec": to_float(row["duration_sec"]),
                 "notes": str(r.get("notes", "")),
             })
         for m in self.manual_events:
+            if str(m["participant"]) != self.participant:
+                continue
             rows.append({
                 "participant": str(m["participant"]),
                 "event_id": int(m["event_id"]),
-                "status": "ai未标记人标记",
+                "status": "/",
                 "event_type": str(m["event_type"]),
                 "动作": ACTION_LABEL_MAP.get(str(m["event_type"]), str(m["event_type"])),
                 "event_ts": str(m["event_ts"]),
                 "event_ts_float": to_float(m["event_ts_float"]),
-                "start_x": to_float(m["start_x"]),
-                "start_y": to_float(m["start_y"]),
-                "end_x": to_float(m["end_x"]),
-                "end_y": to_float(m["end_y"]),
-                "distance_px": to_float(m["distance_px"]),
                 "duration_sec": to_float(m["duration_sec"]),
                 "notes": str(m.get("notes", "")),
             })
         rows.sort(key=lambda x: (x["participant"], x["event_ts_float"]))
         cols = ["participant", "event_id", "status", "event_type", "动作", "event_ts",
-                "event_ts_float", "start_x", "start_y", "end_x", "end_y",
-                "distance_px", "duration_sec", "notes"]
+                "event_ts_float", "duration_sec", "notes"]
         out = pd.DataFrame(rows, columns=cols)
-        default_name = f"final_annotations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        pname = (self.participant or "").strip() or "participant"
+        default_name = f"{pname}_{datetime.now().strftime('%Y%m%d')}.csv"
         path, _ = QFileDialog.getSaveFileName(
             self, "导出最终标记表格", os.path.join(BASE_DIR, default_name),
             "CSV (*.csv)")
@@ -522,11 +469,6 @@ class AnnotationPlayer(QMainWindow):
                 "event_ts": row["event_ts"],
                 "event_ts_float": to_float(row["event_ts_float"]),
                 "duration_sec": to_float(row["duration_sec"]),
-                "distance_px": to_float(row["distance_px"]),
-                "start_x": to_float(row["start_x"]),
-                "start_y": to_float(row["start_y"]),
-                "end_x": to_float(row["end_x"]),
-                "end_y": to_float(row["end_y"]),
                 "event_id": eid,
                 "notes": r.get("notes", ""),
                 "is_manual": False,
@@ -559,8 +501,6 @@ class AnnotationPlayer(QMainWindow):
 
     def on_participant_changed(self):
         self.participant = self.cmb_participant.currentText()
-        self._kf_start = None
-        self._kf_end = None
         self._build_events()
 
         if self.participant in self.offsets:
@@ -578,11 +518,12 @@ class AnnotationPlayer(QMainWindow):
         for i, e in enumerate(self.events):
             r = self.results.get(int(e["event_id"]), {"verified": "", "notes": ""})
             etype = e["event_type"] + ("(手动)" if e.get("is_manual") else "")
+            nature = ACTION_LABEL_MAP.get(e["event_type"], e["event_type"]) + ("(手动)" if e.get("is_manual") else "")
             self.table.setItem(i, 0, QTableWidgetItem(str(e["event_id"])))
-            self.table.setItem(i, 1, QTableWidgetItem(etype))
-            self.table.setItem(i, 2, QTableWidgetItem(str(e["event_ts"])))
-            self.table.setItem(i, 3, QTableWidgetItem(f"{e['duration_sec']:.3f}"))
-            self.table.setItem(i, 4, QTableWidgetItem(f"{e['distance_px']:.1f}"))
+            self.table.setItem(i, 1, QTableWidgetItem(nature))
+            self.table.setItem(i, 2, QTableWidgetItem(etype))
+            self.table.setItem(i, 3, QTableWidgetItem(str(e["event_ts"])))
+            self.table.setItem(i, 4, QTableWidgetItem(f"{e['duration_sec']:.3f}"))
             self.table.setItem(i, 5, QTableWidgetItem(r.get("verified", "")))
             self.table.setItem(i, 6, QTableWidgetItem(e.get("notes", "")))
             for c in range(7):
@@ -799,175 +740,14 @@ class AnnotationPlayer(QMainWindow):
                 return i
         return None
 
-    def _scale(self):
-        if self.cap is None:
-            return 1.0, 1.0
-        vw = self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-        vh = self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-        sw = self.spin_scr_w.value()
-        sh = self.spin_scr_h.value()
-        sx = vw / sw if (sw > 0 and sw != vw) else 1.0
-        sy = vh / sh if (sh > 0 and sh != vh) else 1.0
-        return sx, sy
-
-    def _visible_events(self, t_now):
-        radius = self.spin_radius.value()
-        out = []
-        for e in self.events:
-            te = e["event_ts_float"] - self.offset
-            if abs(te - t_now) <= radius:
-                out.append(e)
-        return out
-
     def display_frame(self, frame):
-        sx, sy = self._scale()
-        t_now = self.current_frame / self.fps if self.cap is not None else self.current_time
-        frame = frame.copy()
-
-        for e in self._visible_events(t_now):
-            is_focus = (e["event_id"] == self.selected_event_id)
-            manual = bool(e.get("is_manual"))
-            if e["event_type"] == "keyframe":
-                color = FOCUS_COLOR if is_focus else KEYFRAME_COLOR
-                self._draw_keyframe(frame, e, sx, sy, color, is_focus)
-            elif e["event_type"] == "deletion":
-                color = FOCUS_COLOR if is_focus else (KEYFRAME_COLOR if manual else DELETION_COLOR)
-                self._draw_deletion(frame, e, sx, sy, color, is_focus)
-            else:
-                color = FOCUS_COLOR if is_focus else (KEYFRAME_COLOR if manual else ANNOTATION_COLOR)
-                self._draw_annotation(frame, e, sx, sy, color, is_focus)
-
-        self._draw_pending_keyframe(frame, sx, sy)
-
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
-        self.last_frame_size = (w, h)
         img = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
         pix = QPixmap.fromImage(img)
         self.video_label.setPixmap(
             pix.scaled(self.video_label.size(), Qt.KeepAspectRatio,
                        Qt.SmoothTransformation))
-
-    def _draw_annotation(self, frame, e, sx, sy, color, is_focus):
-        x1, y1 = int(e["start_x"] * sx), int(e["start_y"] * sy)
-        x2, y2 = int(e["end_x"] * sx), int(e["end_y"] * sy)
-        r = 14 if is_focus else 11
-        th = 3 if is_focus else 2
-        bgr = (color.blue(), color.green(), color.red())
-        if e["distance_px"] > 1:
-            cv2.line(frame, (x1, y1), (x2, y2), bgr, th)
-            cv2.circle(frame, (x2, y2), r - 4, bgr, -1)
-        cv2.circle(frame, (x1, y1), r, bgr, th)
-        cv2.circle(frame, (x1, y1), 2, bgr, -1)
-        cv2.putText(frame, str(e["event_id"]), (x1 + r + 4, y1 - r - 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, bgr, 1, cv2.LINE_AA)
-
-    def _draw_deletion(self, frame, e, sx, sy, color, is_focus):
-        x, y = int(e["start_x"] * sx), int(e["start_y"] * sy)
-        s = 12 if is_focus else 9
-        th = 3 if is_focus else 2
-        bgr = (color.blue(), color.green(), color.red())
-        cv2.line(frame, (x - s, y - s), (x + s, y + s), bgr, th)
-        cv2.line(frame, (x - s, y + s), (x + s, y - s), bgr, th)
-        cv2.circle(frame, (x, y), s + 2, bgr, th)
-        cv2.putText(frame, f"DEL {e['event_id']}", (x + s + 4, y - s - 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, bgr, 1, cv2.LINE_AA)
-
-    def _draw_keyframe(self, frame, e, sx, sy, color, is_focus):
-        x, y = int(e["start_x"] * sx), int(e["start_y"] * sy)
-        s = 13 if is_focus else 10
-        th = 3 if is_focus else 2
-        bgr = (color.blue(), color.green(), color.red())
-        cv2.line(frame, (x - s, y), (x + s, y), bgr, th)
-        cv2.line(frame, (x, y - s), (x, y + s), bgr, th)
-        cv2.circle(frame, (x, y), s, bgr, th)
-        cv2.putText(frame, f"KF {e['event_id']}", (x + s + 4, y - s - 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, bgr, 1, cv2.LINE_AA)
-
-    def _draw_pending_keyframe(self, frame, sx, sy):
-        if self._kf_start is None:
-            return
-        bgr = (PENDING_COLOR.blue(), PENDING_COLOR.green(), PENDING_COLOR.red())
-        x0, y0 = int(self._kf_start[0] * sx), int(self._kf_start[1] * sy)
-        ktype = ACTION_TYPE_MAP.get(self.cmb_action.currentText(), "annotation")
-        if ktype == "deletion":
-            s = 12
-            cv2.line(frame, (x0 - s, y0 - s), (x0 + s, y0 + s), bgr, 2)
-            cv2.line(frame, (x0 - s, y0 + s), (x0 + s, y0 - s), bgr, 2)
-            cv2.circle(frame, (x0, y0), s + 2, bgr, 2)
-            label = "删除点"
-        else:
-            cv2.circle(frame, (x0, y0), 12, bgr, 2)
-            cv2.circle(frame, (x0, y0), 3, bgr, -1)
-            label = "标注点"
-        cv2.putText(frame, label, (x0 + 14, y0 - 14),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, bgr, 1, cv2.LINE_AA)
-
-    def on_video_clicked(self, lx, ly):
-        if self.cap is None:
-            return
-        pos = self._label_to_video(lx, ly)
-        if pos is None:
-            return
-        vx, vy = pos
-        hit = self._hit_test_manual_keyframe(vx, vy)
-        if hit is not None:
-            self.select_event(hit)
-            return
-        sx, sy = self._scale()
-        px, py = vx / sx, vy / sy
-        self._kf_start = (px, py)
-        self._kf_end = (px, py)
-        self._refresh_kf_marker_status()
-        self.refresh_frame()
-
-    def _hit_test_manual_keyframe(self, vx, vy):
-        sx, sy = self._scale()
-        radius = 20
-        best = None
-        best_d = None
-        for e in self.events:
-            if not e.get("is_manual"):
-                continue
-            ex = e["start_x"] * sx
-            ey = e["start_y"] * sy
-            d = math.hypot(vx - ex, vy - ey)
-            if d <= radius and (best_d is None or d < best_d):
-                best_d = d
-                best = e["event_id"]
-        return best
-
-    def _label_to_video(self, lx, ly):
-        fw, fh = self.last_frame_size
-        if fw <= 0 or fh <= 0:
-            return None
-        lw = self.video_label.width()
-        lh = self.video_label.height()
-        if lw <= 0 or lh <= 0:
-            return None
-        scale = min(lw / fw, lh / fh)
-        rw, rh = fw * scale, fh * scale
-        ox = (lw - rw) / 2.0
-        oy = (lh - rh) / 2.0
-        vx = (lx - ox) / scale
-        vy = (ly - oy) / scale
-        if vx < 0 or vy < 0 or vx > fw or vy > fh:
-            return None
-        return vx, vy
-
-    def _refresh_kf_marker_status(self):
-        if self._kf_start is None:
-            self.lbl_status.setText("点击视频可标记关键帧坐标")
-            return
-        ktype = ACTION_TYPE_MAP.get(self.cmb_action.currentText(), "annotation")
-        label = ACTION_LABEL_MAP.get(ktype, ktype)
-        self.lbl_status.setText(
-            f"[{label}] 坐标=({self._kf_start[0]:.1f},{self._kf_start[1]:.1f})")
-
-    def _on_action_changed(self):
-        self._refresh_kf_marker_status()
-        if self._kf_start is not None:
-            self.refresh_frame()
 
     def _next_manual_id(self):
         ids = [int(e["event_id"]) for e in self.events]
@@ -984,12 +764,6 @@ class AnnotationPlayer(QMainWindow):
         ktype = ACTION_TYPE_MAP.get(self.cmb_action.currentText(), "annotation")
         note = self.edit_keynote.text().strip()
         ts_float = self.current_time + self.offset
-        if self._kf_start is not None:
-            x0, y0 = self._kf_start
-            x1, y1 = self._kf_end if self._kf_end is not None else (x0, y0)
-        else:
-            x0, y0, x1, y1 = 0.0, 0.0, 0.0, 0.0
-        distance = math.hypot(x1 - x0, y1 - y0)
         event_id = self._next_manual_id()
         ts_str = format_ts(ts_float)
         e = {
@@ -1000,11 +774,6 @@ class AnnotationPlayer(QMainWindow):
             "window_start": ts_str,
             "window_end": ts_str,
             "duration_sec": 0.0,
-            "distance_px": round(distance, 1),
-            "start_x": round(x0, 1),
-            "start_y": round(y0, 1),
-            "end_x": round(x1, 1),
-            "end_y": round(y1, 1),
             "delete_key": "",
             "event_id": event_id,
             "notes": note,
@@ -1020,12 +789,9 @@ class AnnotationPlayer(QMainWindow):
         if idx is not None:
             self.table.selectRow(idx)
         self.edit_keynote.clear()
-        self._kf_start = None
-        self._kf_end = None
         self.refresh_frame()
         self.lbl_status.setText(
-            f"已添加关键帧 #{event_id} [{ktype}] @ {self.current_time:.2f}s "
-            f"坐标=({x0:.1f},{y0:.1f}) 备注={note}")
+            f"已添加关键帧 #{event_id} [{ktype}] @ {self.current_time:.2f}s 备注={note}")
 
     def delete_keyframe(self):
         e = self._find_event(self.selected_event_id) if self.selected_event_id else None

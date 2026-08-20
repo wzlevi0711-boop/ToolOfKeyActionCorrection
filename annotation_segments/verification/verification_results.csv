@@ -1,6 +1,6 @@
 ﻿event_id,participant,event_type,event_ts,verified,notes
-313,260808_BBY_W_AI,annotation,2026-08-08 18:26:36.002,nan,
-314,260808_BBY_W_AI,annotation,2026-08-08 18:26:38.801,nan,
+313,260808_BBY_W_AI,annotation,2026-08-08 18:26:36.002,bad,
+314,260808_BBY_W_AI,annotation,2026-08-08 18:26:38.801,ok,
 315,260808_BBY_W_AI,annotation,2026-08-08 18:26:40.200,nan,
 316,260808_BBY_W_AI,annotation,2026-08-08 18:30:40.680,nan,
 317,260808_BBY_W_AI,annotation,2026-08-08 18:31:01.305,nan,

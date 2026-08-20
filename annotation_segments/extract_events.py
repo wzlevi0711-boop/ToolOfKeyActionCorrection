@@ -4,9 +4,9 @@ import sys
 import csv
 from collections import defaultdict
 
-BASE = r"C:\Users\wangzhi\Desktop"
-DOCTOR_BASE = os.path.join(BASE, "AI读片原数据")
-GT_BASE = os.path.join(BASE, "实验原数据_实验_0724_1620-jw AIvsNOAI_bone")
+BASE = os.path.dirname(os.path.abspath(__file__))
+DOCTOR_BASE = os.path.join(BASE, "doctor-roi")
+GT_BASE = os.path.join(BASE, "gold-standard")
 
 PT_RE = re.compile(r"\{(-?\d+(?:\.\d+)?(?:[eE]-?\d+)?), (-?\d+(?:\.\d+)?(?:[eE]-?\d+)?)\}")
 XM_RE = re.compile(r"XM(\d+)")
@@ -125,8 +125,7 @@ def main():
             rows.append([xm, "3-医生未标记金标准标记", len(doctor), len(ai), len(gy),
                          "", "", "", f"({r[0]},{r[1]}) {r[2]}x{r[3]}"])
 
-    out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       "verification", "three_events.csv")
+    out = os.path.join(BASE, "verification", "three_events.csv")
     header = ["XM编号", "事件类别", "医生ROI数", "AI_ROI数", "金标准ROI数",
               "医生中心点", "医生大小", "AI中心点", "金标准中心点"]
     with open(out, "w", newline="", encoding="utf-8-sig") as f:

@@ -16,3 +16,14 @@ Thumbs.db
 
 # Junk files
 annotation_segments/鏂板缓 鏂囨湰鏂囨。.txt
+
+# 视频与眼动数据 (121GB, 不入库)
+annotation_segments/eye-movement/
+*.mp4
+*.mkv
+*.ts
+*.m4v
+*.mov
+*.avi
+*.bin
+
